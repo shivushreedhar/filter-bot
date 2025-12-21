@@ -1,11 +1,13 @@
 # ==========================================================
-# FINAL CHANNEL.PY (FIXED IMPORT ERROR)
+# CHANNEL.PY – FINAL VERSION (JISSHU POSTER INCLUDED)
+# Pyrogram v2.x | Koyeb Friendly | Stable
 # ==========================================================
 
 import re
 import asyncio
 import logging
 from collections import defaultdict
+import aiohttp
 
 from pyrogram import Client, filters, enums
 from database.ia_filterdb import save_file, unpack_new_file_id
@@ -28,11 +30,11 @@ MEDIA_FILTER = filters.video | filters.document | filters.audio
 POWERED_BY = "@BSHEGDE5"
 
 # ==========================================================
-# MEMORY
+# MEMORY (BUFFER TECHNIQUE)
 # ==========================================================
-movie_buffer = defaultdict(list)
-processing_movies = set()
-posted_messages = {}
+movie_buffer = defaultdict(list)     # title -> list of files
+processing_movies = set()            # titles currently waiting
+posted_messages = {}                 # title -> message_id
 
 # ==========================================================
 # HELPERS
@@ -106,12 +108,26 @@ def format_size(size):
         size /= 1024
     return f"{size:.2f} TB"
 
+
+async def fetch_jisshu_poster(title: str):
+    url = f"https://api.jisshu.me/poster?query={title}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                return data.get("poster")
+    except Exception:
+        return None
+
 # ==========================================================
-# CAPTION BUILDER
+# CAPTION BUILDER (MATCHES YOUR UI)
 # ==========================================================
 
 def build_caption(title, year, audio, source, files):
     lines = []
+
     header = f"🎬 <b>{title} ({year})</b>" if year else f"🎬 <b>{title}</b>"
     lines.append(header)
     lines.append(f"🔊 <b>Audio :</b> {audio}")
@@ -134,18 +150,29 @@ def build_caption(title, year, audio, source, files):
     return "\n".join(lines)
 
 # ==========================================================
-# MEDIA HANDLER
+# MEDIA HANDLER (FIXED)
 # ==========================================================
 
 @Client.on_message(filters.chat(CHANNELS) & MEDIA_FILTER)
 async def media_handler(bot, message):
-    media = getattr(message, message.media.value, None)
-    if not media:
-        return
-
     log.info("FILE_RECEIVED")
 
-    if await save_file(media) != "suc":
+    media = None
+    if message.document:
+        media = message.document
+    elif message.video:
+        media = message.video
+    elif message.audio:
+        media = message.audio
+
+    if not media:
+        log.error("NO_MEDIA_FOUND")
+        return
+
+    log.info(f"SAVING_FILE | size={media.file_size}")
+
+    status = await save_file(media)
+    if status != "suc":
         log.error("FILE_SAVE_FAILED")
         return
 
@@ -180,7 +207,7 @@ async def media_handler(bot, message):
     processing_movies.remove(title)
 
 # ==========================================================
-# POST / EDIT
+# POST CREATE / AUTO EDIT (WITH POSTER)
 # ==========================================================
 
 async def send_or_edit_post(bot, title):
@@ -190,10 +217,15 @@ async def send_or_edit_post(bot, title):
 
     year = files[0]["year"]
     source = files[0]["source"]
-    audio = " + ".join(sorted({f["audio"] for f in files if f["audio"] != "Unknown"})) or "Unknown"
+    audio = " + ".join(
+        sorted({f["audio"] for f in files if f["audio"] != "Unknown"})
+    ) or "Unknown"
 
     caption = build_caption(title, year, audio, source, files)
 
+    # ======================================
+    # EDIT EXISTING POST
+    # ======================================
     if title in posted_messages:
         await bot.edit_message_caption(
             chat_id=MOVIE_UPDATE_CHANNEL,
@@ -202,14 +234,35 @@ async def send_or_edit_post(bot, title):
             parse_mode=enums.ParseMode.HTML
         )
         log.info(f"POST_EDITED | title={title}")
-    else:
-        msg = await bot.send_message(
-            chat_id=MOVIE_UPDATE_CHANNEL,
-            text=caption,
-            parse_mode=enums.ParseMode.HTML,
-            disable_web_page_preview=True
-        )
+        movie_buffer.pop(title, None)
+        return
+
+    # ======================================
+    # FIRST POST → TRY JISSHU POSTER
+    # ======================================
+    poster = await fetch_jisshu_poster(title)
+
+    try:
+        if poster:
+            msg = await bot.send_photo(
+                chat_id=MOVIE_UPDATE_CHANNEL,
+                photo=poster,
+                caption=caption,
+                parse_mode=enums.ParseMode.HTML
+            )
+            log.info(f"POST_CREATED_WITH_POSTER | title={title}")
+        else:
+            msg = await bot.send_message(
+                chat_id=MOVIE_UPDATE_CHANNEL,
+                text=caption,
+                parse_mode=enums.ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            log.info(f"POST_CREATED_NO_POSTER | title={title}")
+
         posted_messages[title] = msg.id
-        log.info(f"POST_CREATED | title={title}")
+
+    except Exception as e:
+        log.error(f"POST_CREATE_FAILED | {e}")
 
     movie_buffer.pop(title, None)
