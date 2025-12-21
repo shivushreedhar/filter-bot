@@ -1,6 +1,5 @@
 # ==========================================================
-# FINAL CHANNEL.PY
-# 25s GROUP | SAME POST EDIT | SOURCE DETECTION
+# FINAL CHANNEL.PY (FIXED IMPORT ERROR)
 # ==========================================================
 
 import re
@@ -10,7 +9,7 @@ from collections import defaultdict
 
 from pyrogram import Client, filters, enums
 from database.ia_filterdb import save_file, unpack_new_file_id
-from info import BOT_USERNAME, CHANNELS, MOVIE_UPDATE_CHANNEL
+from info import CHANNELS, MOVIE_UPDATE_CHANNEL
 
 # ==========================================================
 # LOGGING (KOYEB FRIENDLY)
@@ -29,11 +28,11 @@ MEDIA_FILTER = filters.video | filters.document | filters.audio
 POWERED_BY = "@BSHEGDE5"
 
 # ==========================================================
-# MEMORY (YOUR TECHNIQUE)
+# MEMORY
 # ==========================================================
-movie_buffer = defaultdict(list)   # title -> file dicts
-processing_movies = set()          # titles under wait
-posted_messages = {}               # title -> message_id
+movie_buffer = defaultdict(list)
+processing_movies = set()
+posted_messages = {}
 
 # ==========================================================
 # HELPERS
@@ -108,7 +107,7 @@ def format_size(size):
     return f"{size:.2f} TB"
 
 # ==========================================================
-# CAPTION BUILDER (EXACT UI)
+# CAPTION BUILDER
 # ==========================================================
 
 def build_caption(title, year, audio, source, files):
@@ -124,22 +123,12 @@ def build_caption(title, year, audio, source, files):
         lines.append("⬇️ <b>Episodes</b>")
         lines.append("━━━━━━━━━━━━━━━━━━")
         for f in sorted(files, key=lambda x: x["episode"]):
-            link = (
-                f"<a href='https://t.me/{BOT_USERNAME}"
-                f"?start=file_0_{f['file_id']}'>"
-                f"{f['episode']} – {f['quality']}</a>"
-            )
-            lines.append(link)
+            lines.append(f"{f['episode']} – {f['quality']}")
     else:
         lines.append("⬇️ <b>Available Qualities</b>")
         lines.append("━━━━━━━━━━━━━━━━━━")
         for f in sorted(files, key=lambda x: x["quality"]):
-            link = (
-                f"<a href='https://t.me/{BOT_USERNAME}"
-                f"?start=file_0_{f['file_id']}'>"
-                f"{f['quality']} – {f['size']}</a>"
-            )
-            lines.append(link)
+            lines.append(f"✨ {f['quality']} – {f['size']}")
 
     lines.append(f"\n〽️ <b>Powered by {POWERED_BY}</b>")
     return "\n".join(lines)
@@ -191,7 +180,7 @@ async def media_handler(bot, message):
     processing_movies.remove(title)
 
 # ==========================================================
-# POST / EDIT (CORE LOGIC)
+# POST / EDIT
 # ==========================================================
 
 async def send_or_edit_post(bot, title):
