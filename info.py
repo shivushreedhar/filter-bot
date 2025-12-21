@@ -49,7 +49,7 @@ DATABASE_URI = environ.get("DATABASE_URI", "mongodb+srv://bshegdeadmin:bsadmin12
 DATABASE_NAME = environ.get("DATABASE_NAME", "bshegde")
 
 # Files index database url
-FILES_DATABASE = environ.get("FILES_DATABASE", "bshegde")
+FILES_DATABASE = environ.get("FILES_DATABASE", "mongodb+srv://bshegdeadmin:bsadmin12@bshegde.4aw32h2.mongodb.net/bshegde?retryWrites=true&w=majority&tls=true&appName=Bshegde")
 COLLECTION_NAME = environ.get("COLLECTION_NAME", "jisshu")
 
 # Other Channel's
