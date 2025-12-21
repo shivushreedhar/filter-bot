@@ -8,7 +8,7 @@ from collections import defaultdict
 from pyrogram import Client, filters, enums
 
 from info import CHANNELS, MOVIE_UPDATE_CHANNEL
-from utils import temp, Jisshu_qualities, get_imdb
+from utils import temp, get_qualities, get_imdb
 from database.users_chats_db import db
 from database.ia_filterdb import save_file, unpack_new_file_id
 from database.post_map_db import get_post, save_post
@@ -49,7 +49,7 @@ movie_files = defaultdict(list)
 processing_movies = set()
 
 # ======================================================
-# HELPERS (TITLE FIX ONLY)
+# HELPERS (TITLE + YEAR ONLY)
 # ======================================================
 
 def extract_title_year(text: str):
@@ -139,7 +139,7 @@ async def queue_movie_file(bot, media):
     log.info(f"GROUP ADD | {title}")
 
     caption = media.caption or media.file_name
-    quality = await Jisshu_qualities(caption, media.file_name)
+    quality = await get_qualities(caption)
 
     langs = []
     for l in CAPTION_LANGUAGES:
@@ -177,9 +177,6 @@ async def send_movie_update(bot, title, files):
     key = title.lower().replace(" ", "_")
     year = files[0]["year"]
     language = files[0]["language"]
-
-    imdb = await get_imdb(title)
-    kind = imdb.get("kind", "MOVIE").upper()
 
     poster = await fetch_poster(title)
 
