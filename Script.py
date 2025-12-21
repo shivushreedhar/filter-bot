@@ -32,7 +32,7 @@ class script(object):
 
 <blockquote>🌿 ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://t.me/BSHEGDE5'>BSHEGDE</a></b></blockquote>"""
 
-    ABOUT_TEXT = """<blockquote><b>‣ ᴍʏ ɴᴀᴍᴇ : Jisshu filter bot
+    ABOUT_TEXT = """<blockquote><b>‣ ᴍʏ ɴᴀᴍᴇ : BSHEGDE MOVIE BOT
 ‣ ᴄʀᴇᴀᴛᴏʀ : <a href='https://t.me/BSHEGDE5'>BSHEGDE</a>
 ‣ ʟɪʙʀᴀʀʏ : ᴘʏʀᴏɢʀᴀᴍ
 ‣ ʟᴀɴɢᴜᴀɢᴇ : ᴘʏᴛʜᴏɴ
@@ -445,5 +445,6 @@ Aᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ᴀɴᴅ ᴍᴀᴋᴇ ᴍᴇ ᴀ�
 ʙʏ /details ᴄᴏᴍᴍᴀɴᴅ
 </blockquote>
 Iғ ʏᴏᴜ ʜᴀᴠᴇ ᴀɴʏ ᴅᴏᴜʙᴛs ᴘʟᴇᴀsᴇ <a href="https://t.me/Shreeshiva323">ᴄᴏɴᴛᴀᴄᴛ</a> ᴍʏ <a href="https://t.me/Shreeshiva323">B S H E G D E</a></b>"""
+
 
 
