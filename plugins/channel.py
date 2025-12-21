@@ -8,7 +8,7 @@ from collections import defaultdict
 from pyrogram import Client, filters, enums
 
 from info import CHANNELS, MOVIE_UPDATE_CHANNEL
-from utils import temp, get_qualities, get_imdb
+from utils import temp, get_imdb
 from database.users_chats_db import db
 from database.ia_filterdb import save_file, unpack_new_file_id
 from database.post_map_db import get_post, save_post
@@ -42,14 +42,14 @@ CAPTION_LANGUAGES = [
 ]
 
 # ======================================================
-# STATE (YOUR LOGIC)
+# STATE
 # ======================================================
 
 movie_files = defaultdict(list)
 processing_movies = set()
 
 # ======================================================
-# HELPERS (TITLE + YEAR ONLY)
+# HELPERS
 # ======================================================
 
 def extract_title_year(text: str):
@@ -64,7 +64,7 @@ def extract_title_year(text: str):
 
     text = re.sub(r"S\d{1,2}E\d{1,2}", "", text, flags=re.I)
     text = re.sub(
-        r"(WEB[-_. ]DL|HDRip|x264|x265|HEVC|720p|1080p|2160p|Mul|Multi)",
+        r"(WEB[-_. ]DL|WEBRip|HDRip|BluRay|x264|x265|HEVC|720p|1080p|2160p|Mul|Multi)",
         "",
         text,
         flags=re.I,
@@ -74,6 +74,27 @@ def extract_title_year(text: str):
     text = re.sub(r"\s+", " ", text).strip()
 
     return text, year
+
+
+def detect_quality(text: str) -> str:
+    text = text.lower()
+    for q in ["2160p", "1080p", "720p", "576p", "540p", "520p", "480p"]:
+        if q in text:
+            return q.upper()
+    return "HDRip"
+
+
+def detect_source(text: str) -> str:
+    t = text.lower()
+    if "web-dl" in t or "webdl" in t:
+        return "WEB-DL"
+    if "webrip" in t:
+        return "WEBRip"
+    if "hdrip" in t:
+        return "HDRip"
+    if "bluray" in t or "brrip" in t:
+        return "BluRay"
+    return "Unknown"
 
 
 def format_size(size):
@@ -131,15 +152,17 @@ async def media_handler(bot, message):
     await queue_movie_file(bot, media)
 
 # ======================================================
-# GROUPING (YOUR LOGIC)
+# GROUPING
 # ======================================================
 
 async def queue_movie_file(bot, media):
     title, year = extract_title_year(media.file_name)
     log.info(f"GROUP ADD | {title}")
 
-    caption = media.caption or media.file_name
-    quality = await get_qualities(caption)
+    caption = f"{media.file_name} {media.caption or ''}"
+
+    quality = detect_quality(caption)
+    source = detect_source(caption)
 
     langs = []
     for l in CAPTION_LANGUAGES:
@@ -152,6 +175,7 @@ async def queue_movie_file(bot, media):
     movie_files[title].append({
         "file_id": file_id,
         "quality": quality,
+        "source": source,
         "size": format_size(media.file_size),
         "language": language,
         "year": year,
@@ -170,13 +194,12 @@ async def queue_movie_file(bot, media):
     processing_movies.remove(title)
 
 # ======================================================
-# POST CREATE / EDIT (REFERRED TECHNIQUE)
+# POST CREATE / EDIT
 # ======================================================
 
 async def send_movie_update(bot, title, files):
     key = title.lower().replace(" ", "_")
-    year = files[0]["year"]
-    language = files[0]["language"]
+    first = files[0]
 
     poster = await fetch_poster(title)
 
@@ -190,11 +213,11 @@ async def send_movie_update(bot, title, files):
     body = "\n".join(lines)
 
     caption = (
-        f"<blockquote><b>🎬 {title} ({year})</b></blockquote>\n"
-        f"<blockquote><b>🎧 Audio : {language}</b></blockquote>\n"
-        f"<blockquote><b>📀 Source : WEB-DL</b></blockquote>\n\n"
-        f"<blockquote><b>⬇️ Available</b></blockquote>\n"
-        f"<blockquote><b>{body}</b></blockquote>\n\n"
+        f"<blockquote>🎬 <b>{title} ({first['year']})</b></blockquote>\n\n"
+        f"<b>🎧 Audio :</b> {first['language']}\n"
+        f"<b>📀 Source :</b> {first['source']}\n\n"
+        f"<b>⬇️ Available</b>\n"
+        f"{body}\n\n"
         f"<blockquote><b>〽️ Powered by @BSHEGDE5</b></blockquote>"
     )
 
