@@ -1,18 +1,17 @@
 # --| This code created by: Jisshu_bots & SilentXBotz |--#
 
 import re
-import hashlib
 import asyncio
+from pyrogram import Client, filters, enums
+from collections import defaultdict
+import aiohttp
+
 from info import *
 from utils import *
-from pyrogram import Client, filters, enums
 from database.users_chats_db import db
 from database.ia_filterdb import save_file, unpack_new_file_id
-import aiohttp
-from typing import Optional
-from collections import defaultdict
 
-# ================= LOG HELPER =================
+# ================= KOYEB LOG =================
 def log(msg):
     print(f"[KOYEB] {msg}")
 
@@ -42,92 +41,144 @@ SERIES_UI = """📺 <b>{title} ({year})</b>
 """
 
 CAPTION_LANGUAGES = [
-    "Hindi","Tamil","Telugu","Malayalam","Kannada","English",
-    "Bengali","Marathi","Punjabi","Gujarati","Spanish","French"
+    "Kannada", "Tamil", "Telugu", "Malayalam",
+    "Hindi", "English"
 ]
 
-notified_movies = set()
-movie_files = defaultdict(list)
 POST_DELAY = 25
+movie_files = defaultdict(list)
 processing_movies = set()
+notified_movies = set()
 
 media_filter = filters.document | filters.video | filters.audio
 
+# ======================================================
+# 🔧 FINAL TITLE FIX (THIS IS THE IMPORTANT PART)
+# ======================================================
+def extract_title_year(filename: str):
+    """
+    @BSHEGDE5 Mrs.Deshpande (2025) S01E01 WEB-DL #720p x264 Mul.mkv
+    -> title = Mrs Deshpande
+    -> year  = 2025
+    """
+
+    # remove extension
+    name = re.sub(r"\.(mkv|mp4|avi)$", "", filename, flags=re.I)
+
+    # remove username/tags
+    name = re.sub(r"@\w+|#\w+", "", name)
+
+    # extract year
+    year_match = re.search(r"\b(19|20)\d{2}\b", name)
+    year = year_match.group(0) if year_match else ""
+
+    # keep text BEFORE year only
+    if year:
+        name = name.split(year)[0]
+
+    # remove episode info
+    name = re.sub(r"S\d{1,2}E\d{1,2}", "", name, flags=re.I)
+
+    # remove quality / codec words
+    name = re.sub(
+        r"(WEB[-_. ]DL|HDRip|x264|x265|HEVC|720p|1080p|2160p|Mul|Multi)",
+        "",
+        name,
+        flags=re.I
+    )
+
+    # replace dots & junk with space
+    name = re.sub(r"[.\-_()\[\]]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+
+    return name, year
+
+# ======================================================
 
 @Client.on_message(filters.chat(CHANNELS) & media_filter)
 async def media(bot, message):
     log("FILE RECEIVED")
 
     media = getattr(message, message.media.value, None)
-    if media.mime_type in ["video/mp4", "video/x-matroska", "document/mp4"]:
-        media.file_type = message.media.value
-        media.caption = message.caption
+    if not media:
+        return
 
-        success = await save_file(media)
-        if success == "suc":
-            log("FILE SAVED")
+    success = await save_file(media)
+    if success != "suc":
+        return
 
-        if success == "suc" and await db.get_send_movie_update_status(bot.me.id):
-            await queue_movie_file(bot, media)
+    log("FILE SAVED")
+
+    if not await db.get_send_movie_update_status(bot.me.id):
+        return
+
+    await queue_movie_file(bot, media)
 
 
 async def queue_movie_file(bot, media):
-    file_name = await movie_name_format(media.file_name)
-    caption = await movie_name_format(media.caption)
+    title, year = extract_title_year(media.file_name)
 
-    log(f"GROUP ADD → {file_name}")
+    log(f"GROUP ADD → {title}")
 
+    caption = media.caption or media.file_name
     quality = await Jisshu_qualities(caption, media.file_name)
+
     language = ", ".join(
-        [l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()]
+        [l[:3] for l in CAPTION_LANGUAGES if l.lower() in caption.lower()]
     ) or "Kan"
 
     file_id, _ = unpack_new_file_id(media.file_id)
-    movie_files[file_name].append({
+
+    movie_files[title].append({
         "file_id": file_id,
         "quality": quality,
         "size": format_file_size(media.file_size),
-        "caption": caption,
-        "language": language
+        "language": language,
+        "year": year
     })
 
-    if file_name in processing_movies:
+    if title in processing_movies:
         return
 
-    processing_movies.add(file_name)
+    processing_movies.add(title)
     log("GROUP WAIT 25s")
 
     await asyncio.sleep(POST_DELAY)
+    await send_movie_update(bot, title, movie_files[title])
 
-    await send_movie_update(bot, file_name, movie_files[file_name])
-    movie_files.pop(file_name, None)
-    processing_movies.remove(file_name)
+    movie_files.pop(title, None)
+    processing_movies.remove(title)
 
 
-async def send_movie_update(bot, file_name, files):
-    if file_name in notified_movies:
-        return
+async def send_movie_update(bot, title, files):
+    if title in notified_movies:
+        log("POST EDITED")
+    else:
+        log("POST CREATE")
 
-    notified_movies.add(file_name)
-    log("POST CREATE")
+    notified_movies.add(title)
 
-    imdb = await get_imdb(file_name)
-    title = imdb.get("title", file_name)
-    year = imdb.get("year", "")
+    year = files[0]["year"]
+    language = files[0]["language"]
+
+    imdb = await get_imdb(title)
     kind = imdb.get("kind", "MOVIE").upper()
 
     poster = await fetch_movie_poster(title, year)
 
     links = ""
     for f in files:
-        links += f"⭐ {f['quality']} – <a href='https://t.me/{temp.U_NAME}?start=file_0_{f['file_id']}'>{f['size']}</a>\n"
+        links += (
+            f"⭐ {f['quality']} – "
+            f"<a href='https://t.me/{temp.U_NAME}?start=file_0_{f['file_id']}'>{f['size']}</a>\n"
+        )
 
     caption = (
         SERIES_UI if kind == "TV_SERIES" else MOVIE_UI
     ).format(
         title=title,
         year=year,
-        language=files[0]["language"],
+        language=language,
         links=links
     )
 
@@ -138,17 +189,8 @@ async def send_movie_update(bot, file_name, files):
         parse_mode=enums.ParseMode.HTML
     )
 
-    log("POST EDITED")
-
 
 # ================= HELPERS (UNCHANGED) =================
-
-async def get_imdb(name):
-    imdb = await get_poster(name)
-    if not imdb:
-        return {}
-    return imdb
-
 
 async def fetch_movie_poster(title, year=None):
     async with aiohttp.ClientSession() as s:
@@ -157,18 +199,7 @@ async def fetch_movie_poster(title, year=None):
         ) as r:
             if r.status == 200:
                 j = await r.json()
-                for k in ["jisshu-2","jisshu-3","jisshu-4"]:
+                for k in ["jisshu-2", "jisshu-3", "jisshu-4"]:
                     if j.get(k):
                         return j[k][0]
     return "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg"
-
-
-async def movie_name_format(name):
-    return re.sub(r"[^a-zA-Z0-9 ]"," ",name).strip()
-
-
-def format_file_size(size):
-    for u in ["B","KB","MB","GB"]:
-        if size < 1024:
-            return f"{size:.2f}{u}"
-        size /= 1024
