@@ -1,242 +1,174 @@
-# ==========================================================
-# CHANNEL.PY – FINAL DATABASE-SAFE VERSION
-# ==========================================================
+# --| This code created by: Jisshu_bots & SilentXBotz |--#
 
 import re
+import hashlib
 import asyncio
-import logging
-from collections import defaultdict
-import aiohttp
-
+from info import *
+from utils import *
 from pyrogram import Client, filters, enums
+from database.users_chats_db import db
 from database.ia_filterdb import save_file, unpack_new_file_id
-from info import CHANNELS, MOVIE_UPDATE_CHANNEL
+import aiohttp
+from typing import Optional
+from collections import defaultdict
 
-# ==========================================================
-# LOGGING
-# ==========================================================
-logging.basicConfig(
-    level=logging.INFO,
-    format="[CHANNEL] %(message)s"
-)
-log = logging.getLogger("channel")
+# ================= LOG HELPER =================
+def log(msg):
+    print(f"[KOYEB] {msg}")
 
-# ==========================================================
-# CONFIG
-# ==========================================================
-GROUP_WAIT = 25
-MEDIA_FILTER = filters.video | filters.document | filters.audio
-POWERED_BY = "@BSHEGDE5"
+# ================= UI =================
+MOVIE_UI = """🎬 <b>{title} ({year})</b>
 
-# ==========================================================
-# MEMORY
-# ==========================================================
-movie_buffer = defaultdict(list)
+🔊 <b>Audio :</b> {language}
+📀 <b>Source :</b> WEB-DL
+
+⬇️ <b>Available Qualities</b>
+━━━━━━━━━━━━━━
+{links}
+
+<blockquote>⚡ Powered by @BSHEGDE5</blockquote>
+"""
+
+SERIES_UI = """📺 <b>{title} ({year})</b>
+
+🔊 <b>Audio :</b> {language}
+📀 <b>Source :</b> WEB-DL
+
+⬇️ <b>Episodes</b>
+━━━━━━━━━━━━━━
+{links}
+
+<blockquote>⚡ Powered by @BSHEGDE5</blockquote>
+"""
+
+CAPTION_LANGUAGES = [
+    "Hindi","Tamil","Telugu","Malayalam","Kannada","English",
+    "Bengali","Marathi","Punjabi","Gujarati","Spanish","French"
+]
+
+notified_movies = set()
+movie_files = defaultdict(list)
+POST_DELAY = 25
 processing_movies = set()
-posted_messages = {}
 
-# ==========================================================
-# HELPERS
-# ==========================================================
-
-def clean_text(text):
-    text = re.sub(r"http\S+|@\w+|#\w+", "", text)
-    text = re.sub(r"[._\-()\[\]{}!:@;']", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+media_filter = filters.document | filters.video | filters.audio
 
 
-def extract_title_year(text):
-    text = clean_text(text)
-    m = re.search(r"\b(19|20)\d{2}\b", text)
-    if m:
-        year = m.group(0)
-        title = text.split(year)[0].strip()
-        return title.title(), year
-    return text.title(), ""
+@Client.on_message(filters.chat(CHANNELS) & media_filter)
+async def media(bot, message):
+    log("FILE RECEIVED")
+
+    media = getattr(message, message.media.value, None)
+    if media.mime_type in ["video/mp4", "video/x-matroska", "document/mp4"]:
+        media.file_type = message.media.value
+        media.caption = message.caption
+
+        success = await save_file(media)
+        if success == "suc":
+            log("FILE SAVED")
+
+        if success == "suc" and await db.get_send_movie_update_status(bot.me.id):
+            await queue_movie_file(bot, media)
 
 
-def extract_quality(text):
-    for q in ["2160p", "1080p", "720p", "520p", "480p"]:
-        if q in text.lower():
-            return q.upper()
-    return "720P"
+async def queue_movie_file(bot, media):
+    file_name = await movie_name_format(media.file_name)
+    caption = await movie_name_format(media.caption)
 
+    log(f"GROUP ADD → {file_name}")
 
-def extract_episode(text):
-    m = re.search(r"(S\d{1,2}E\d{1,2})", text, re.I)
-    return m.group(1).upper() if m else None
-
-
-def extract_audio(text):
-    langs = {
-        "kannada": "Kan",
-        "tamil": "Tam",
-        "telugu": "Tel",
-        "malayalam": "Mal",
-        "hindi": "Hin",
-        "english": "Eng"
-    }
-    found = [v for k, v in langs.items() if k in text.lower()]
-    return " + ".join(sorted(set(found))) if found else "Unknown"
-
-
-def extract_source(text):
-    src = {
-        "bluray": "BluRay",
-        "bdrip": "BluRay",
-        "hdrip": "HDRip",
-        "web-dl": "WEB-DL",
-        "webdl": "WEB-DL",
-        "webrip": "WEBRip",
-        "dvdrip": "DVDRip",
-        "cam": "CAM"
-    }
-    text = text.lower()
-    for k, v in src.items():
-        if k in text:
-            return v
-    return "WEB-DL"
-
-
-def format_size(size):
-    for u in ["B", "KB", "MB", "GB"]:
-        if size < 1024:
-            return f"{size:.2f} {u}"
-        size /= 1024
-    return f"{size:.2f} TB"
-
-
-async def fetch_jisshu_poster(title):
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(
-                f"https://api.jisshu.me/poster?query={title}", timeout=10
-            ) as r:
-                if r.status != 200:
-                    return None
-                return (await r.json()).get("poster")
-    except Exception:
-        return None
-
-# ==========================================================
-# CAPTION
-# ==========================================================
-
-def build_caption(title, year, audio, source, files):
-    lines = [
-        f"🎬 <b>{title} ({year})</b>" if year else f"🎬 <b>{title}</b>",
-        f"🔊 <b>Audio :</b> {audio}",
-        f"💿 <b>Source :</b> {source}\n",
-        "⬇️ <b>Available</b>",
-        "━━━━━━━━━━━━━━━━━━"
-    ]
-
-    for f in sorted(files, key=lambda x: x["quality"]):
-        label = f["episode"] or f["quality"]
-        extra = f["quality"] if f["episode"] else f["size"]
-        lines.append(f"✨ {label} – {extra}")
-
-    lines.append(f"\n〽️ <b>Powered by {POWERED_BY}</b>")
-    return "\n".join(lines)
-
-# ==========================================================
-# MEDIA HANDLER (FIXED DB SAVE)
-# ==========================================================
-
-@Client.on_message(filters.chat(CHANNELS) & MEDIA_FILTER)
-async def media_handler(bot, message):
-
-    log.info("FILE_RECEIVED")
-
-    media = message.document or message.video or message.audio
-    if not media:
-        log.info("NO_MEDIA")
-        return
-
-    if not media.file_name:
-        log.info("FILE_HAS_NO_NAME")
-        return
-
-    # ✅ DATABASE SAVE (FIXED)
-    result = await save_file(media)
-    log.info(f"DB_SAVE_RESULT={result}")
-
-    if not result:
-        log.info("FILE_SAVE_FAILED")
-        return
-
-    log.info("FILE_SAVED")
+    quality = await Jisshu_qualities(caption, media.file_name)
+    language = ", ".join(
+        [l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()]
+    ) or "Kan"
 
     file_id, _ = unpack_new_file_id(media.file_id)
-    text = media.file_name or message.caption or ""
-
-    title, year = extract_title_year(text)
-    episode = extract_episode(text)
-
-    movie_buffer[title].append({
+    movie_files[file_name].append({
         "file_id": file_id,
-        "quality": extract_quality(text),
-        "size": format_size(media.file_size),
-        "episode": episode,
-        "audio": extract_audio(text),
-        "source": extract_source(text),
-        "year": year
+        "quality": quality,
+        "size": format_file_size(media.file_size),
+        "caption": caption,
+        "language": language
     })
 
-    log.info(f"GROUP_ADD | {title}")
-
-    if title in processing_movies:
+    if file_name in processing_movies:
         return
 
-    processing_movies.add(title)
-    log.info(f"GROUP_WAIT | {GROUP_WAIT}s")
+    processing_movies.add(file_name)
+    log("GROUP WAIT 25s")
 
-    await asyncio.sleep(GROUP_WAIT)
-    await send_or_edit_post(bot, title)
-    processing_movies.remove(title)
+    await asyncio.sleep(POST_DELAY)
 
-# ==========================================================
-# POST CREATE / EDIT
-# ==========================================================
+    await send_movie_update(bot, file_name, movie_files[file_name])
+    movie_files.pop(file_name, None)
+    processing_movies.remove(file_name)
 
-async def send_or_edit_post(bot, title):
 
-    files = movie_buffer.get(title)
-    if not files:
+async def send_movie_update(bot, file_name, files):
+    if file_name in notified_movies:
         return
 
-    caption = build_caption(
-        title,
-        files[0]["year"],
-        " + ".join({f["audio"] for f in files if f["audio"] != "Unknown"}) or "Unknown",
-        files[0]["source"],
-        files
+    notified_movies.add(file_name)
+    log("POST CREATE")
+
+    imdb = await get_imdb(file_name)
+    title = imdb.get("title", file_name)
+    year = imdb.get("year", "")
+    kind = imdb.get("kind", "MOVIE").upper()
+
+    poster = await fetch_movie_poster(title, year)
+
+    links = ""
+    for f in files:
+        links += f"⭐ {f['quality']} – <a href='https://t.me/{temp.U_NAME}?start=file_0_{f['file_id']}'>{f['size']}</a>\n"
+
+    caption = (
+        SERIES_UI if kind == "TV_SERIES" else MOVIE_UI
+    ).format(
+        title=title,
+        year=year,
+        language=files[0]["language"],
+        links=links
     )
 
-    if title in posted_messages:
-        await bot.edit_message_caption(
-            MOVIE_UPDATE_CHANNEL,
-            posted_messages[title],
-            caption,
-            parse_mode=enums.ParseMode.HTML
-        )
-        log.info("POST_EDITED")
-    else:
-        poster = await fetch_jisshu_poster(title)
-        if poster:
-            msg = await bot.send_photo(
-                MOVIE_UPDATE_CHANNEL,
-                poster,
-                caption=caption,
-                parse_mode=enums.ParseMode.HTML
-            )
-        else:
-            msg = await bot.send_message(
-                MOVIE_UPDATE_CHANNEL,
-                caption,
-                parse_mode=enums.ParseMode.HTML
-            )
-        posted_messages[title] = msg.id
-        log.info("POST_CREATED")
+    await bot.send_photo(
+        chat_id=MOVIE_UPDATE_CHANNEL,
+        photo=poster,
+        caption=caption,
+        parse_mode=enums.ParseMode.HTML
+    )
 
-    movie_buffer.pop(title, None)
+    log("POST EDITED")
+
+
+# ================= HELPERS (UNCHANGED) =================
+
+async def get_imdb(name):
+    imdb = await get_poster(name)
+    if not imdb:
+        return {}
+    return imdb
+
+
+async def fetch_movie_poster(title, year=None):
+    async with aiohttp.ClientSession() as s:
+        async with s.get(
+            f"https://jisshuapis.vercel.app/api.php?query={title.replace(' ','+')}"
+        ) as r:
+            if r.status == 200:
+                j = await r.json()
+                for k in ["jisshu-2","jisshu-3","jisshu-4"]:
+                    if j.get(k):
+                        return j[k][0]
+    return "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg"
+
+
+async def movie_name_format(name):
+    return re.sub(r"[^a-zA-Z0-9 ]"," ",name).strip()
+
+
+def format_file_size(size):
+    for u in ["B","KB","MB","GB"]:
+        if size < 1024:
+            return f"{size:.2f}{u}"
+        size /= 1024
