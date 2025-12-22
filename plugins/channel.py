@@ -1,6 +1,6 @@
-# --| FINAL channel.py |--
+# --| FINAL FIXED channel.py |--
 # --| Pyrogram v2 SAFE |--
-# --| Caption Bug FIXED |--
+# --| Document Caption BUG FIXED |--
 
 import re
 import asyncio
@@ -14,16 +14,13 @@ from utils import get_poster
 from database.ia_filterdb import save_file, unpack_new_file_id
 
 
-# ================= CONFIG ================= #
-
-POST_DELAY = 5  # seconds
-MOVIE_POST_LOCK = set()
+POST_DELAY = 10
+movie_files = defaultdict(list)
+processing_movies = set()
 
 CAPTION_LANGUAGES = [
-    "Bhojpuri", "Hindi", "Bengali", "Tamil", "English", "Telugu",
-    "Malayalam", "Kannada", "Marathi", "Punjabi", "Gujarati",
-    "Korean", "Spanish", "French", "German", "Chinese",
-    "Arabic", "Portuguese", "Russian", "Japanese", "Urdu"
+    "Hindi", "Tamil", "Telugu", "Malayalam", "Kannada",
+    "English", "Bengali", "Marathi", "Punjabi", "Gujarati"
 ]
 
 UPDATE_CAPTION = """<b>𝖭𝖤𝖶 {} 𝖠𝖣𝖣𝖤𝖣 ✅</b>
@@ -36,65 +33,51 @@ UPDATE_CAPTION = """<b>𝖭𝖤𝖶 {} 𝖠𝖣𝖣𝖤𝖣 ✅</b>
 
 {}
 
-<b>〽️ Powered by @BSHEGDE5</b>
+<blockquote>〽️ Powered by @BSHEGDE5</blockquote>
 """
 
-media_filter = filters.document | filters.video
-movie_files = defaultdict(list)
+media_filter = filters.document | filters.video | filters.audio
 
-
-# ================= MEDIA HANDLER ================= #
 
 @Client.on_message(filters.chat(CHANNELS) & media_filter)
 async def media_handler(bot, message):
     try:
         print("📥 MEDIA RECEIVED FROM:", message.chat.id)
 
-        # ✅ PICK MEDIA SAFELY
-        if message.document:
-            media = message.document
-        elif message.video:
-            media = message.video
-        else:
-            return
-
-        if not media.file_name:
+        # ✅ SAFE MEDIA PICK
+        media = message.document or message.video or message.audio
+        if not media or not media.file_name:
             return
 
         # ✅ SAVE FILE
-        status = await save_file(media)
-        print("💾 SAVE STATUS:", status)
+        sts = await save_file(media)
+        if sts != "suc":
+            return
 
-        if status == "suc":
-            await queue_movie(bot, message, media)
+        # ✅ ALWAYS USE message.caption
+        caption = message.caption or media.file_name
+
+        await queue_movie(bot, media, caption)
 
     except Exception as e:
         print("❌ MEDIA HANDLER ERROR:", e)
-        try:
-            await bot.send_message(LOG_CHANNEL, f"MEDIA HANDLER ERROR:\n{e}")
-        except:
-            pass
+        await bot.send_message(LOG_CHANNEL, f"MEDIA HANDLER ERROR:\n{e}")
 
 
-# ================= QUEUE / GROUP ================= #
+async def queue_movie(bot, media, caption):
+    file_name = clean_name(media.file_name)
 
-async def queue_movie(bot, message, media):
-    file_name = movie_name_format(media.file_name)
+    year = re.search(r"\b(19|20)\d{2}\b", caption)
+    year = year.group(0) if year else ""
 
-    # ✅ THE ONLY VALID WAY
-    caption_src = message.caption or media.file_name
-
-    year_match = re.search(r"\b(19|20)\d{2}\b", caption_src)
-    year = year_match.group(0) if year_match else ""
-
-    quality = detect_quality(caption_src + media.file_name)
+    quality = detect_quality(caption + media.file_name)
 
     language = ", ".join(
-        l for l in CAPTION_LANGUAGES if l.lower() in caption_src.lower()
+        l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()
     ) or "Unknown"
 
     file_id, _ = unpack_new_file_id(media.file_id)
-    size = format_file_size(media.file_size)
+    size = format_size(media.file_size)
 
     movie_files[file_name].append({
         "file_id": file_id,
@@ -102,27 +85,22 @@ async def queue_movie(bot, message, media):
         "size": size,
         "language": language,
         "year": year,
-        "source": message.chat.id,
     })
 
-    if file_name in MOVIE_POST_LOCK:
+    if file_name in processing_movies:
         return
 
-    MOVIE_POST_LOCK.add(file_name)
+    processing_movies.add(file_name)
     await asyncio.sleep(POST_DELAY)
 
     try:
         await send_movie_update(bot, file_name, movie_files[file_name])
     finally:
         movie_files.pop(file_name, None)
-        MOVIE_POST_LOCK.discard(file_name)
+        processing_movies.discard(file_name)
 
-
-# ================= POST TO MUC ================= #
 
 async def send_movie_update(bot, movie_name, files):
-    print("🚀 POSTING TO MUC:", movie_name)
-
     imdb = await safe_imdb(movie_name)
     title = imdb.get("title", movie_name)
     kind = imdb.get("kind", "MOVIE").upper()
@@ -130,15 +108,14 @@ async def send_movie_update(bot, movie_name, files):
     poster = await fetch_movie_poster(title)
     poster = poster or "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg"
 
-    quality_lines = []
-
+    links = []
     for f in files:
         link = (
             f"<a href='https://t.me/{bot.me.username}"
-            f"?start=file_{f['source']}_{f['file_id']}'>"
+            f"?start=file_0_{f['file_id']}'>"
             f"{f['size']}</a>"
         )
-        quality_lines.append(f"📦 {f['quality']} : {link}")
+        links.append(f"📦 {f['quality']} : {link}")
 
     caption = UPDATE_CAPTION.format(
         kind,
@@ -146,29 +123,23 @@ async def send_movie_update(bot, movie_name, files):
         files[0]["year"],
         files[0]["quality"],
         files[0]["language"],
-        "\n".join(quality_lines),
+        "\n".join(links),
     )
 
     await bot.send_photo(
         chat_id=MOVIE_UPDATE_CHANNEL,
         photo=poster,
         caption=caption,
-        parse_mode=enums.ParseMode.HTML,
+        parse_mode=enums.ParseMode.HTML
     )
 
     print("✅ POSTED TO MUC:", movie_name)
 
 
-# ================= HELPERS ================= #
-
 async def safe_imdb(name):
     try:
         data = await get_poster(name)
-        return {
-            "title": data.get("title"),
-            "kind": data.get("kind"),
-            "year": data.get("year"),
-        } if data else {}
+        return data or {}
     except:
         return {}
 
@@ -193,11 +164,11 @@ def detect_quality(text):
     return "720p"
 
 
-def movie_name_format(text):
+def clean_name(text):
     return re.sub(r"[^\w\s]", " ", text).replace("_", " ").strip()
 
 
-def format_file_size(size):
+def format_size(size):
     for unit in ["B", "KB", "MB", "GB"]:
         if size < 1024:
             return f"{size:.2f} {unit}"
