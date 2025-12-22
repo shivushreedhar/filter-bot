@@ -1,4 +1,4 @@
-# --| FINAL CHANNEL.PY (DB + PEER FIXED) |--#
+# --| FINAL CHANNEL.PY (STABLE & DB SAFE) |--#
 
 import re
 import asyncio
@@ -42,7 +42,9 @@ media_filter = filters.document | filters.video | filters.audio
 
 movie_files = defaultdict(list)
 processing_movies = set()
-posted_messages = {}   # title|year → message_id
+
+# title|year → message_id (runtime cache)
+posted_messages = {}
 
 
 # ================= MEDIA ================= #
@@ -82,7 +84,7 @@ async def queue_movie_file(bot, media):
 
         size = format_file_size(media.file_size)
 
-        # ✅ CRITICAL FIX: keep file_ref
+        # ✅ Keep BOTH for DB safety
         file_id, file_ref = unpack_new_file_id(media.file_id)
 
         movie_files[title].append({
@@ -123,11 +125,12 @@ async def send_movie_update(bot, title, files):
         poster = await fetch_movie_poster(movie_title, year)
         poster = poster or "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg"
 
+        # ✅ WORKING DEEP LINK (OLD FORMAT)
         quality_text = ""
         for f in files:
             link = (
                 f"<a href='https://t.me/{temp.U_NAME}"
-                f"?start=file_0_{f['file_id']}_{f['file_ref']}'>"
+                f"?start=file_0_{f['file_id']}'>"
                 f"{f['quality']} ({f['size']})</a>"
             )
             quality_text += QUALITY_LINE.format(f["quality"], link)
@@ -145,9 +148,10 @@ async def send_movie_update(bot, title, files):
             channel = MOVIE_UPDATE_CHANNEL
         channel = int(channel)
 
+        # 🔥 Meet peer to avoid PEER_ID_INVALID
         await bot.get_chat(channel)
 
-        # ✏️ TRY EDIT
+        # ✏️ TRY EDIT FIRST
         if key in posted_messages:
             try:
                 print("✏️ Editing existing post")
@@ -163,9 +167,9 @@ async def send_movie_update(bot, title, files):
                 print("✅ Post edited")
                 return
             except Exception as e:
-                print(f"⚠️ Edit failed: {e}")
+                print(f"⚠️ Edit failed, creating new post: {e}")
 
-        # 🆕 CREATE NEW
+        # 🆕 CREATE NEW POST
         print("📝 Creating new post")
         msg = await bot.send_photo(
             chat_id=channel,
