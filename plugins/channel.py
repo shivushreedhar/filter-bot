@@ -1,21 +1,22 @@
-# --| Fixed by ChatGPT |--
-# --| Base: Jisshu_bots & SilentXBotz |--
+# --| FINAL channel.py |--
+# --| BIN_CHANNEL not required |--
+# --| Posting to MUC FIXED |--
 
 import re
 import asyncio
 import aiohttp
-
 from collections import defaultdict
+
 from pyrogram import Client, filters, enums
 
-from info import *
-from utils import *
+from info import CHANNELS, MOVIE_UPDATE_CHANNEL, LOG_CHANNEL
+from utils import get_poster
 from database.ia_filterdb import save_file, unpack_new_file_id
 
 
 # ================= CONFIG ================= #
 
-POST_DELAY = 5
+POST_DELAY = 5  # seconds
 MOVIE_POST_LOCK = set()
 
 CAPTION_LANGUAGES = [
@@ -43,46 +44,44 @@ movie_files = defaultdict(list)
 
 
 # ================= MEDIA HANDLER ================= #
+# 🔥 Listens to CHANNELS from info.py
 
 @Client.on_message(filters.chat(CHANNELS) & media_filter)
 async def media_handler(bot, message):
-
     try:
+        print("📥 MEDIA RECEIVED FROM:", message.chat.id)
+
         media = getattr(message, message.media.value, None)
         if not media or not media.file_name:
             return
 
-        if media.mime_type not in [
-            "video/mp4",
-            "video/x-matroska",
-            "application/octet-stream",
-        ]:
-            return
-
-        media.file_type = message.media.value
-        media.caption = message.caption or ""
-
+        # save to DB
         status = await save_file(media)
+        print("💾 SAVE STATUS:", status)
+
         if status == "suc":
-            await queue_movie(bot, media)
+            await queue_movie(bot, message.chat.id, media)
 
     except Exception as e:
-        await bot.send_message(LOG_CHANNEL, f"MEDIA ERROR:\n{e}")
+        print("❌ MEDIA HANDLER ERROR:", e)
+        try:
+            await bot.send_message(LOG_CHANNEL, f"MEDIA ERROR:\n{e}")
+        except:
+            pass
 
 
-# ================= QUEUE ================= #
+# ================= QUEUE / GROUP ================= #
 
-async def queue_movie(bot, media):
+async def queue_movie(bot, source_chat_id, media):
+    file_name = movie_name_format(media.file_name)
+    caption_src = media.caption or media.file_name
 
-    file_name = await movie_name_format(media.file_name)
-    caption = await movie_name_format(media.caption or media.file_name)
+    year_match = re.search(r"\b(19|20)\d{2}\b", caption_src)
+    year = year_match.group(0) if year_match else ""
 
-    year = re.search(r"\b(19|20)\d{2}\b", caption)
-    year = year.group(0) if year else ""
-
-    quality = await Jisshu_qualities(caption, media.file_name)
+    quality = detect_quality(caption_src + media.file_name)
     language = ", ".join(
-        l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()
+        l for l in CAPTION_LANGUAGES if l.lower() in caption_src.lower()
     ) or "Unknown"
 
     file_id, _ = unpack_new_file_id(media.file_id)
@@ -94,6 +93,7 @@ async def queue_movie(bot, media):
         "size": size,
         "language": language,
         "year": year,
+        "source": source_chat_id,   # 🔥 IMPORTANT
     })
 
     if file_name in MOVIE_POST_LOCK:
@@ -109,11 +109,12 @@ async def queue_movie(bot, media):
         MOVIE_POST_LOCK.discard(file_name)
 
 
-# ================= POST ================= #
+# ================= POST TO MUC ================= #
 
 async def send_movie_update(bot, movie_name, files):
+    print("🚀 POSTING TO MUC:", movie_name)
 
-    imdb = await get_imdb(movie_name)
+    imdb = await safe_imdb(movie_name)
     title = imdb.get("title", movie_name)
     kind = imdb.get("kind", "MOVIE").upper()
 
@@ -124,8 +125,8 @@ async def send_movie_update(bot, movie_name, files):
 
     for f in files:
         link = (
-            f"<a href='https://t.me/{temp.U_NAME}"
-            f"?start=file_{BIN_CHANNEL}_{f['file_id']}'>"
+            f"<a href='https://t.me/{bot.me.username}"
+            f"?start=file_{f['source']}_{f['file_id']}'>"
             f"{f['size']}</a>"
         )
         quality_lines.append(f"📦 {f['quality']} : {link}")
@@ -146,10 +147,12 @@ async def send_movie_update(bot, movie_name, files):
         parse_mode=enums.ParseMode.HTML,
     )
 
+    print("✅ POSTED TO MUC:", movie_name)
+
 
 # ================= HELPERS ================= #
 
-async def get_imdb(name):
+async def safe_imdb(name):
     try:
         data = await get_poster(name)
         return {
@@ -165,7 +168,7 @@ async def fetch_movie_poster(title):
     try:
         async with aiohttp.ClientSession() as session:
             url = f"https://jisshuapis.vercel.app/api.php?query={title.replace(' ', '+')}"
-            async with session.get(url, timeout=5) as r:
+            async with session.get(url, timeout=6) as r:
                 data = await r.json()
                 for k in ("jisshu-2", "jisshu-3", "jisshu-4"):
                     if data.get(k):
@@ -174,14 +177,14 @@ async def fetch_movie_poster(title):
         return None
 
 
-async def Jisshu_qualities(text, file):
+def detect_quality(text):
     for q in ["2160p", "1080p", "720p", "480p"]:
-        if q.lower() in (text + file).lower():
+        if q.lower() in text.lower():
             return q
     return "720p"
 
 
-async def movie_name_format(text):
+def movie_name_format(text):
     return re.sub(r"[^\w\s]", " ", text).replace("_", " ").strip()
 
 
