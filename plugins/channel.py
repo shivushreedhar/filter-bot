@@ -51,16 +51,23 @@ async def media_handler(bot, message):
     try:
         print("📥 MEDIA RECEIVED FROM:", message.chat.id)
 
-        media = getattr(message, message.media.value, None)
-        if not media or not media.file_name:
+        # ✅ SAFE MEDIA PICK
+        if message.document:
+            media = message.document
+        elif message.video:
+            media = message.video
+        else:
             return
 
-        # save to DB
+        if not media.file_name:
+            return
+
+        # ✅ SAVE TO DB
         status = await save_file(media)
         print("💾 SAVE STATUS:", status)
 
         if status == "suc":
-            await queue_movie(bot, message.chat.id, media)
+            await queue_movie(bot, message, media)
 
     except Exception as e:
         print("❌ MEDIA HANDLER ERROR:", e)
@@ -72,14 +79,17 @@ async def media_handler(bot, message):
 
 # ================= QUEUE / GROUP ================= #
 
-async def queue_movie(bot, source_chat_id, media):
+async def queue_movie(bot, message, media):
     file_name = movie_name_format(media.file_name)
-    caption_src = media.caption or media.file_name
+
+    # ✅ FIXED: caption comes from message, NOT media
+    caption_src = message.caption or media.file_name
 
     year_match = re.search(r"\b(19|20)\d{2}\b", caption_src)
     year = year_match.group(0) if year_match else ""
 
     quality = detect_quality(caption_src + media.file_name)
+
     language = ", ".join(
         l for l in CAPTION_LANGUAGES if l.lower() in caption_src.lower()
     ) or "Unknown"
@@ -93,7 +103,7 @@ async def queue_movie(bot, source_chat_id, media):
         "size": size,
         "language": language,
         "year": year,
-        "source": source_chat_id,   # 🔥 IMPORTANT
+        "source": message.chat.id,   # 🔥 IMPORTANT
     })
 
     if file_name in MOVIE_POST_LOCK:
