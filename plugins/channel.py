@@ -1,9 +1,8 @@
-# --| UI Modified & Logs Added |--#
-# --| Title + Year Detection Added |--#
-# --| Original Logic Intact |--#
+# --| FINAL CHANNEL.PY |--#
+# --| Edit if possible, else create new post |--#
+# --| Title + Year Detection Enabled |--#
 
 import re
-import hashlib
 import asyncio
 from info import *
 from utils import *
@@ -23,13 +22,11 @@ CAPTION_LANGUAGES = [
     "Russian","Japanese","Odia","Assamese","Urdu",
 ]
 
-# ================= UI CAPTION ================= #
-
 UPDATE_CAPTION = """<b>🎬 NEW {}</b>
 
 <b>📀 Title :</b> {} {}
 <b>🎧 Audio :</b> {}
-<b>📺 Source :</b> {}
+<b>📺 Source :</b> HDRip
 
 ━━━━━━━━━━━━━━━━━━
 <b>📦 Available Files</b>
@@ -40,18 +37,20 @@ UPDATE_CAPTION = """<b>🎬 NEW {}</b>
 <blockquote>⚡ Powered by @BSHEGDE5</blockquote>
 """
 
-QUALITY_CAPTION = "• {} ➜ {}\n"
+QUALITY_LINE = "• {} ➜ {}\n"
 
-# ================= GLOBALS ================= #
-
-notified_movies = set()
-movie_files = defaultdict(list)
-processing_movies = set()
 POST_DELAY = 10
 
 media_filter = filters.document | filters.video | filters.audio
 
-# ================= MEDIA HANDLER ================= #
+movie_files = defaultdict(list)
+processing_movies = set()
+
+# 🔐 in-memory post cache (edit first, else new)
+posted_messages = {}
+
+
+# ================= MEDIA ================= #
 
 @Client.on_message(filters.chat(CHANNELS) & media_filter)
 async def media(bot, message):
@@ -63,13 +62,15 @@ async def media(bot, message):
         media.file_type = message.media.value
         media.caption = message.caption
 
-        success_sts = await save_file(media)
-
-        if success_sts == "suc":
+        if await save_file(media) == "suc":
             print("💾 File saved in database")
 
-            if await db.get_send_movie_update_status(bot.me.id):
-                await queue_movie_file(bot, media)
+            status = await db.get_send_movie_update_status(bot.me.id)
+            print(f"ℹ️ Movie update flag : {status}")
+
+            # force posting if flag disabled
+            await queue_movie_file(bot, media)
+
 
 # ================= QUEUE ================= #
 
@@ -80,33 +81,24 @@ async def queue_movie_file(bot, media):
         raw_name = await movie_name_format(media.file_name)
         caption = await movie_name_format(media.caption)
 
-        # 🎯 TITLE + YEAR DETECTION
         year_match = re.search(r"\b(19|20)\d{2}\b", raw_name)
         year = year_match.group(0) if year_match else None
+        title = raw_name.split(year)[0].strip() if year else raw_name
 
-        if year:
-            title = raw_name.split(year)[0].strip()
-        else:
-            title = raw_name
+        quality = await Jisshu_qualities(caption, media.file_name)
+        language = ", ".join(
+            l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()
+        ) or "Unknown"
 
-        quality = await get_qualities(caption) or "HDRip"
-        j_quality = await Jisshu_qualities(caption, media.file_name)
-
-        language = (
-            ", ".join([l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()])
-            or "Unknown"
-        )
-
-        file_size = format_file_size(media.file_size)
+        size = format_file_size(media.file_size)
         file_id, _ = unpack_new_file_id(media.file_id)
 
         movie_files[title].append({
             "file_id": file_id,
-            "quality": j_quality,
-            "size": file_size,
+            "quality": quality,
+            "size": size,
             "language": language,
-            "year": year,
-            "caption": caption
+            "year": year
         })
 
         if title in processing_movies:
@@ -120,25 +112,21 @@ async def queue_movie_file(bot, media):
         processing_movies.remove(title)
 
     except Exception as e:
-        print(f"❌ Queue Error : {e}")
+        print(f"❌ Queue Error: {e}")
 
-# ================= POST ================= #
+
+# ================= POST / EDIT ================= #
 
 async def send_movie_update(bot, title, files):
     try:
-        if title in notified_movies:
-            return
+        imdb = await get_imdb(title)
+        movie_title = imdb.get("title", title)
+        kind = imdb.get("kind", "Movie").upper()
+        year = files[0]["year"] or imdb.get("year") or ""
 
-        notified_movies.add(title)
-        print("📝 Post created")
+        key = f"{movie_title}|{year}"
 
-        imdb_data = await get_imdb(title)
-        imdb_title = imdb_data.get("title", title)
-        kind = imdb_data.get("kind", "Movie").upper()
-
-        year = files[0]["year"] or imdb_data.get("year") or ""
-
-        poster = await fetch_movie_poster(imdb_title, year)
+        poster = await fetch_movie_poster(movie_title, year)
         poster = poster or "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg"
 
         quality_text = ""
@@ -147,37 +135,60 @@ async def send_movie_update(bot, title, files):
                 f"<a href='https://t.me/{temp.U_NAME}?start=file_0_{f['file_id']}'>"
                 f"{f['quality']} ({f['size']})</a>"
             )
-            quality_text += QUALITY_CAPTION.format(f["quality"], link)
+            quality_text += QUALITY_LINE.format(f["quality"], link)
 
         caption = UPDATE_CAPTION.format(
             kind,
-            imdb_title,
+            movie_title,
             year,
             files[0]["language"],
-            "WEB-DL",
             quality_text
         )
 
         channel = await db.movies_update_channel_id() or MOVIE_UPDATE_CHANNEL
 
-        await bot.send_photo(
+        # 📝 TRY EDIT FIRST
+        if key in posted_messages:
+            try:
+                print("✏️ Editing existing post")
+
+                await bot.edit_message_media(
+                    chat_id=channel,
+                    message_id=posted_messages[key],
+                    media=enums.InputMediaPhoto(
+                        media=poster,
+                        caption=caption,
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                )
+                print("✅ Post edited successfully")
+                return
+
+            except Exception as e:
+                print(f"⚠️ Edit failed, creating new post: {e}")
+
+        # 🆕 CREATE NEW POST
+        print("📝 Creating new post")
+
+        msg = await bot.send_photo(
             chat_id=channel,
             photo=poster,
             caption=caption,
             parse_mode=enums.ParseMode.HTML
         )
 
-        print("✏️ Post sent successfully")
+        posted_messages[key] = msg.id
+        print("✅ Posted successfully")
 
     except Exception as e:
-        print(f"❌ Post Error : {e}")
+        print(f"❌ Post Error: {e}")
 
-# ================= HELPERS (UNCHANGED) ================= #
+
+# ================= HELPERS ================= #
 
 async def get_imdb(name):
     try:
-        imdb = await get_poster(name)
-        return imdb or {}
+        return await get_poster(name) or {}
     except:
         return {}
 
@@ -191,21 +202,15 @@ async def fetch_movie_poster(title: str, year: Optional[int] = None):
                 if r.status != 200:
                     return None
                 data = await r.json()
-                for k in ["jisshu-2","jisshu-3","jisshu-4"]:
+                for k in ("jisshu-2","jisshu-3","jisshu-4"):
                     if data.get(k):
                         return data[k][0]
         except:
             return None
 
-async def get_qualities(text):
-    for q in ["480p","720p","1080p","2160p","WEB-DL","HDRip"]:
-        if q.lower() in text.lower():
-            return q
-    return "720p"
-
 async def Jisshu_qualities(text, file_name):
     text = (text + file_name).lower()
-    for q in ["2160p","1080p","720p","480p"]:
+    for q in ("2160p","1080p","720p","480p"):
         if q in text:
             return q
     return "720p"
@@ -214,7 +219,7 @@ async def movie_name_format(name):
     return re.sub(r"[^A-Za-z0-9 ]+", " ", name).strip()
 
 def format_file_size(size):
-    for unit in ["B","KB","MB","GB","TB"]:
+    for unit in ("B","KB","MB","GB","TB"):
         if size < 1024:
             return f"{size:.2f} {unit}"
         size /= 1024
