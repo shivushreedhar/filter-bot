@@ -1,6 +1,4 @@
-# --| FINAL CHANNEL.PY |--#
-# --| Edit if possible, else create new post |--#
-# --| Title + Year Detection Enabled |--#
+# --| FINAL CHANNEL.PY (DB + PEER FIXED) |--#
 
 import re
 import asyncio
@@ -26,7 +24,7 @@ UPDATE_CAPTION = """<b>🎬 NEW {}</b>
 
 <b>📀 Title :</b> {} {}
 <b>🎧 Audio :</b> {}
-<b>📺 Source :</b> HDRip
+<b>📺 Source :</b> WEB-DL
 
 ━━━━━━━━━━━━━━━━━━
 <b>📦 Available Files</b>
@@ -40,14 +38,11 @@ UPDATE_CAPTION = """<b>🎬 NEW {}</b>
 QUALITY_LINE = "• {} ➜ {}\n"
 
 POST_DELAY = 10
-
 media_filter = filters.document | filters.video | filters.audio
 
 movie_files = defaultdict(list)
 processing_movies = set()
-
-# 🔐 in-memory post cache (edit first, else new)
-posted_messages = {}
+posted_messages = {}   # title|year → message_id
 
 
 # ================= MEDIA ================= #
@@ -58,17 +53,12 @@ async def media(bot, message):
 
     media = getattr(message, message.media.value, None)
 
-    if media.mime_type in ["video/mp4", "video/x-matroska", "document/mp4"]:
+    if media.mime_type in ("video/mp4", "video/x-matroska", "document/mp4"):
         media.file_type = message.media.value
         media.caption = message.caption
 
         if await save_file(media) == "suc":
             print("💾 File saved in database")
-
-            status = await db.get_send_movie_update_status(bot.me.id)
-            print(f"ℹ️ Movie update flag : {status}")
-
-            # force posting if flag disabled
             await queue_movie_file(bot, media)
 
 
@@ -91,10 +81,13 @@ async def queue_movie_file(bot, media):
         ) or "Unknown"
 
         size = format_file_size(media.file_size)
-        file_id, _ = unpack_new_file_id(media.file_id)
+
+        # ✅ CRITICAL FIX: keep file_ref
+        file_id, file_ref = unpack_new_file_id(media.file_id)
 
         movie_files[title].append({
             "file_id": file_id,
+            "file_ref": file_ref,
             "quality": quality,
             "size": size,
             "language": language,
@@ -108,6 +101,7 @@ async def queue_movie_file(bot, media):
         await asyncio.sleep(POST_DELAY)
 
         await send_movie_update(bot, title, movie_files[title])
+
         del movie_files[title]
         processing_movies.remove(title)
 
@@ -132,7 +126,8 @@ async def send_movie_update(bot, title, files):
         quality_text = ""
         for f in files:
             link = (
-                f"<a href='https://t.me/{temp.U_NAME}?start=file_0_{f['file_id']}'>"
+                f"<a href='https://t.me/{temp.U_NAME}"
+                f"?start=file_0_{f['file_id']}_{f['file_ref']}'>"
                 f"{f['quality']} ({f['size']})</a>"
             )
             quality_text += QUALITY_LINE.format(f["quality"], link)
@@ -145,13 +140,17 @@ async def send_movie_update(bot, title, files):
             quality_text
         )
 
-        channel = await db.movies_update_channel_id() or MOVIE_UPDATE_CHANNEL
+        channel = await db.movies_update_channel_id()
+        if not channel or channel == 0:
+            channel = MOVIE_UPDATE_CHANNEL
+        channel = int(channel)
 
-        # 📝 TRY EDIT FIRST
+        await bot.get_chat(channel)
+
+        # ✏️ TRY EDIT
         if key in posted_messages:
             try:
                 print("✏️ Editing existing post")
-
                 await bot.edit_message_media(
                     chat_id=channel,
                     message_id=posted_messages[key],
@@ -161,15 +160,13 @@ async def send_movie_update(bot, title, files):
                         parse_mode=enums.ParseMode.HTML
                     )
                 )
-                print("✅ Post edited successfully")
+                print("✅ Post edited")
                 return
-
             except Exception as e:
-                print(f"⚠️ Edit failed, creating new post: {e}")
+                print(f"⚠️ Edit failed: {e}")
 
-        # 🆕 CREATE NEW POST
+        # 🆕 CREATE NEW
         print("📝 Creating new post")
-
         msg = await bot.send_photo(
             chat_id=channel,
             photo=poster,
