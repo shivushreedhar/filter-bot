@@ -1,6 +1,6 @@
 # --| FINAL channel.py |--
-# --| BIN_CHANNEL not required |--
-# --| Posting to MUC FIXED |--
+# --| Pyrogram v2 SAFE |--
+# --| Caption Bug FIXED |--
 
 import re
 import asyncio
@@ -44,14 +44,13 @@ movie_files = defaultdict(list)
 
 
 # ================= MEDIA HANDLER ================= #
-# 🔥 Listens to CHANNELS from info.py
 
 @Client.on_message(filters.chat(CHANNELS) & media_filter)
 async def media_handler(bot, message):
     try:
         print("📥 MEDIA RECEIVED FROM:", message.chat.id)
 
-        # ✅ SAFE MEDIA PICK
+        # ✅ PICK MEDIA SAFELY
         if message.document:
             media = message.document
         elif message.video:
@@ -62,7 +61,7 @@ async def media_handler(bot, message):
         if not media.file_name:
             return
 
-        # ✅ SAVE TO DB
+        # ✅ SAVE FILE
         status = await save_file(media)
         print("💾 SAVE STATUS:", status)
 
@@ -72,7 +71,7 @@ async def media_handler(bot, message):
     except Exception as e:
         print("❌ MEDIA HANDLER ERROR:", e)
         try:
-            await bot.send_message(LOG_CHANNEL, f"MEDIA ERROR:\n{e}")
+            await bot.send_message(LOG_CHANNEL, f"MEDIA HANDLER ERROR:\n{e}")
         except:
             pass
 
@@ -82,7 +81,7 @@ async def media_handler(bot, message):
 async def queue_movie(bot, message, media):
     file_name = movie_name_format(media.file_name)
 
-    # ✅ FIXED: caption comes from message, NOT media
+    # ✅ THE ONLY VALID WAY
     caption_src = message.caption or media.file_name
 
     year_match = re.search(r"\b(19|20)\d{2}\b", caption_src)
@@ -103,7 +102,7 @@ async def queue_movie(bot, message, media):
         "size": size,
         "language": language,
         "year": year,
-        "source": message.chat.id,   # 🔥 IMPORTANT
+        "source": message.chat.id,
     })
 
     if file_name in MOVIE_POST_LOCK:
