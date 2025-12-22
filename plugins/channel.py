@@ -1,25 +1,21 @@
-# --| This code fixed by ChatGPT |--
-# --| Original base: Jisshu_bots & SilentXBotz |--
+# --| Fixed by ChatGPT |--
+# --| Base: Jisshu_bots & SilentXBotz |--
 
 import re
-import hashlib
 import asyncio
 import aiohttp
 
-from typing import Optional
 from collections import defaultdict
-
 from pyrogram import Client, filters, enums
 
 from info import *
 from utils import *
-from database.users_chats_db import db
 from database.ia_filterdb import save_file, unpack_new_file_id
 
 
 # ================= CONFIG ================= #
 
-POST_DELAY = 5  # seconds (safe)
+POST_DELAY = 5
 MOVIE_POST_LOCK = set()
 
 CAPTION_LANGUAGES = [
@@ -42,8 +38,7 @@ UPDATE_CAPTION = """<b>𝖭𝖤𝖶 {} 𝖠𝖣𝖣𝖤𝖣 ✅</b>
 <b>〽️ Powered by @BSHEGDE5</b>
 """
 
-media_filter = filters.document | filters.video | filters.audio
-
+media_filter = filters.document | filters.video
 movie_files = defaultdict(list)
 
 
@@ -51,15 +46,16 @@ movie_files = defaultdict(list)
 
 @Client.on_message(filters.chat(CHANNELS) & media_filter)
 async def media_handler(bot, message):
-    try:
-        print("📥 MEDIA RECEIVED FROM:", message.chat.id)
 
+    try:
         media = getattr(message, message.media.value, None)
-        if not media:
+        if not media or not media.file_name:
             return
 
         if media.mime_type not in [
-            "video/mp4", "video/x-matroska", "application/octet-stream"
+            "video/mp4",
+            "video/x-matroska",
+            "application/octet-stream",
         ]:
             return
 
@@ -67,27 +63,27 @@ async def media_handler(bot, message):
         media.caption = message.caption or ""
 
         status = await save_file(media)
-        print("💾 SAVE STATUS:", status)
-
         if status == "suc":
             await queue_movie(bot, media)
 
     except Exception as e:
-        print("❌ MEDIA HANDLER ERROR:", e)
-        await bot.send_message(LOG_CHANNEL, f"MEDIA HANDLER ERROR:\n{e}")
+        await bot.send_message(LOG_CHANNEL, f"MEDIA ERROR:\n{e}")
 
 
 # ================= QUEUE ================= #
 
 async def queue_movie(bot, media):
+
     file_name = await movie_name_format(media.file_name)
     caption = await movie_name_format(media.caption or media.file_name)
 
-    year_match = re.search(r"\b(19|20)\d{2}\b", caption)
-    year = year_match.group(0) if year_match else ""
+    year = re.search(r"\b(19|20)\d{2}\b", caption)
+    year = year.group(0) if year else ""
 
     quality = await Jisshu_qualities(caption, media.file_name)
-    language = ", ".join([l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()]) or "Unknown"
+    language = ", ".join(
+        l for l in CAPTION_LANGUAGES if l.lower() in caption.lower()
+    ) or "Unknown"
 
     file_id, _ = unpack_new_file_id(media.file_id)
     size = format_file_size(media.file_size)
@@ -96,17 +92,14 @@ async def queue_movie(bot, media):
         "file_id": file_id,
         "quality": quality,
         "size": size,
-        "caption": caption,
         "language": language,
-        "year": year
+        "year": year,
     })
 
     if file_name in MOVIE_POST_LOCK:
-        print("⏳ GROUPING:", file_name)
         return
 
     MOVIE_POST_LOCK.add(file_name)
-
     await asyncio.sleep(POST_DELAY)
 
     try:
@@ -119,42 +112,39 @@ async def queue_movie(bot, media):
 # ================= POST ================= #
 
 async def send_movie_update(bot, movie_name, files):
-    try:
-        print("🚀 POSTING TO MUC:", movie_name)
 
-        imdb = await get_imdb(movie_name)
-        title = imdb.get("title", movie_name)
-        kind = imdb.get("kind", "MOVIE").upper().replace(" ", "_")
+    imdb = await get_imdb(movie_name)
+    title = imdb.get("title", movie_name)
+    kind = imdb.get("kind", "MOVIE").upper()
 
-        poster = await fetch_movie_poster(title)
-        poster = poster or "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg"
+    poster = await fetch_movie_poster(title)
+    poster = poster or "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg"
 
-        quality_lines = []
-        for f in files:
-            link = f"<a href='https://t.me/{temp.U_NAME}?start=file_0_{f['file_id']}'>{f['size']}</a>"
-            quality_lines.append(f"📦 {f['quality']} : {link}")
+    quality_lines = []
 
-        caption = UPDATE_CAPTION.format(
-            kind,
-            title,
-            files[0]["year"],
-            files[0]["quality"],
-            files[0]["language"],
-            "\n".join(quality_lines)
+    for f in files:
+        link = (
+            f"<a href='https://t.me/{temp.U_NAME}"
+            f"?start=file_{BIN_CHANNEL}_{f['file_id']}'>"
+            f"{f['size']}</a>"
         )
+        quality_lines.append(f"📦 {f['quality']} : {link}")
 
-        await bot.send_photo(
-            chat_id=MOVIE_UPDATE_CHANNEL,
-            photo=poster,
-            caption=caption,
-            parse_mode=enums.ParseMode.HTML
-        )
+    caption = UPDATE_CAPTION.format(
+        kind,
+        title,
+        files[0]["year"],
+        files[0]["quality"],
+        files[0]["language"],
+        "\n".join(quality_lines),
+    )
 
-        print("✅ POST SUCCESS:", movie_name)
-
-    except Exception as e:
-        print("❌ POST FAILED:", e)
-        await bot.send_message(LOG_CHANNEL, f"POST FAILED:\n{e}")
+    await bot.send_photo(
+        chat_id=MOVIE_UPDATE_CHANNEL,
+        photo=poster,
+        caption=caption,
+        parse_mode=enums.ParseMode.HTML,
+    )
 
 
 # ================= HELPERS ================= #
@@ -162,28 +152,26 @@ async def send_movie_update(bot, movie_name, files):
 async def get_imdb(name):
     try:
         data = await get_poster(name)
-        if not data:
-            return {}
         return {
             "title": data.get("title"),
             "kind": data.get("kind"),
-            "year": data.get("year")
-        }
+            "year": data.get("year"),
+        } if data else {}
     except:
         return {}
 
 
 async def fetch_movie_poster(title):
-    async with aiohttp.ClientSession() as session:
-        try:
+    try:
+        async with aiohttp.ClientSession() as session:
             url = f"https://jisshuapis.vercel.app/api.php?query={title.replace(' ', '+')}"
             async with session.get(url, timeout=5) as r:
                 data = await r.json()
                 for k in ("jisshu-2", "jisshu-3", "jisshu-4"):
                     if data.get(k):
                         return data[k][0]
-        except:
-            return None
+    except:
+        return None
 
 
 async def Jisshu_qualities(text, file):
