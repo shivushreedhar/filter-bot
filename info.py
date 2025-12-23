@@ -225,3 +225,18 @@ cmds = [
     {"grp_cmds": "Check Group Commands"},
     {"admin_cmds": "Bot Admin Commands"},
 ]
+# ================= GLOBAL ID SANITIZER =================
+# This MUST be at the end of info.py
+
+def _is_real_channel(cid):
+    return isinstance(cid, int) and str(cid).startswith("-100")
+
+# Keep only real channels
+CHANNELS = [c for c in CHANNELS if _is_real_channel(c)]
+
+# Force all plugins to use ONLY channel IDs
+GROUPS = CHANNELS.copy()
+
+# Ensure admins are never treated as channels
+ADMINS = [a for a in ADMINS if not _is_real_channel(a)]
+
