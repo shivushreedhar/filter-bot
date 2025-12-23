@@ -10,6 +10,10 @@ import psutil
 import time
 
 
+def is_real_channel(chat_id):
+    return isinstance(chat_id, int) and str(chat_id).startswith("-100")
+
+
 @Client.on_message(filters.new_chat_members & filters.group)
 async def save_group(bot, message):
     check = [u.id for u in message.new_chat_members]
@@ -36,7 +40,10 @@ async def save_group(bot, message):
             reply_markup = InlineKeyboardMarkup(btn)
             await bot.send_message(
                 chat_id=message.chat.id,
-                text=f"<b>☤ ᴛʜᴀɴᴋ ʏᴏᴜ ꜰᴏʀ ᴀᴅᴅɪɴɢ ᴍᴇ ɪɴ {message.chat.title}\n\n🤖 ᴅᴏɴ’ᴛ ꜰᴏʀɢᴇᴛ ᴛᴏ ᴍᴀᴋᴇ ᴍᴇ ᴀᴅᴍɪɴ 🤖\n\n㊝ ɪꜰ ʏᴏᴜ ʜᴀᴠᴇ ᴀɴʏ ᴅᴏᴜʙᴛ ʏᴏᴜ ᴄʟᴇᴀʀ ɪᴛ ᴜsɪɴɢ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴs ㊜</b>",
+                text=(
+                    f"<b>☤ ᴛʜᴀɴᴋ ʏᴏᴜ ꜰᴏʀ ᴀᴅᴅɪɴɢ ᴍᴇ ɪɴ {message.chat.title}\n\n"
+                    "🤖 ᴅᴏɴ’ᴛ ꜰᴏʀɢᴇᴛ ᴛᴏ ᴍᴀᴋᴇ ᴍᴇ ᴀᴅᴍɪɴ 🤖</b>"
+                ),
                 reply_markup=reply_markup,
             )
 
@@ -46,60 +53,66 @@ async def leave_a_chat(bot, message):
     r = message.text.split(None)
     if len(message.command) == 1:
         return await message.reply(
-            "<b>ᴜꜱᴇ ᴛʜɪꜱ ᴄᴏᴍᴍᴀɴᴅ ʟɪᴋᴇ ᴛʜɪꜱ `/leave -100******`</b>"
+            "<b>Use like: `/leave -100xxxxxxxxxx`</b>"
         )
-    if len(r) > 2:
-        reason = message.text.split(None, 2)[2]
-        chat = message.text.split(None, 2)[1]
-    else:
-        chat = message.command[1]
-        reason = "ɴᴏ ʀᴇᴀꜱᴏɴ ᴘʀᴏᴠɪᴅᴇᴅ..."
+
+    chat = message.command[1]
+    reason = message.text.split(None, 2)[2] if len(r) > 2 else "No reason provided"
+
     try:
         chat = int(chat)
     except:
-        chat = chat
+        pass
+
     try:
-        btn = [[InlineKeyboardButton("⚡️ ᴏᴡɴᴇʀ ⚡️", url=USERNAME)]]
-        reply_markup = InlineKeyboardMarkup(btn)
-        await bot.send_message(
-            chat_id=chat,
-            text=f"😞 ʜᴇʟʟᴏ ᴅᴇᴀʀ,\nᴍʏ ᴏᴡɴᴇʀ ʜᴀꜱ ᴛᴏʟᴅ ᴍᴇ ᴛᴏ ʟᴇᴀᴠᴇ ꜰʀᴏᴍ ɢʀᴏᴜᴘ ꜱᴏ ɪ ɢᴏ 😔\n\n🚫 ʀᴇᴀꜱᴏɴ ɪꜱ - <code>{reason}</code>\n\nɪꜰ ʏᴏᴜ ɴᴇᴇᴅ ᴛᴏ ᴀᴅᴅ ᴍᴇ ᴀɢᴀɪɴ ᴛʜᴇɴ ᴄᴏɴᴛᴀᴄᴛ ᴍʏ ᴏᴡɴᴇʀ 👇",
-            reply_markup=reply_markup,
-        )
         await bot.leave_chat(chat)
         await db.delete_chat(chat)
-        await message.reply(f"<b>ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ʟᴇꜰᴛ ꜰʀᴏᴍ ɢʀᴏᴜᴘ - `{chat}`</b>")
+        await message.reply(f"<b>Left chat `{chat}` successfully</b>")
     except Exception as e:
-        await message.reply(f"<b>🚫 ᴇʀʀᴏʀ - `{e}`</b>")
+        await message.reply(f"<b>Error: `{e}`</b>")
 
 
 @Client.on_message(filters.command("groups") & filters.user(ADMINS))
 async def groups_list(bot, message):
     msg = await message.reply("<b>Searching...</b>")
     chats = await db.get_all_chats()
+
     out = "Groups saved in the database:\n\n"
     count = 1
+
     async for chat in chats:
-        chat_info = await bot.get_chat(chat["id"])
-        members_count = (
-            chat_info.members_count if chat_info.members_count else "Unknown"
+        cid = chat.get("id")
+
+        # 🔑 FIX: only real channels / supergroups
+        if not is_real_channel(cid):
+            continue
+
+        try:
+            chat_info = await bot.get_chat(cid)
+            members = chat_info.members_count or "Unknown"
+        except Exception:
+            continue
+
+        out += (
+            f"<b>{count}. Title - `{chat['title']}`\n"
+            f"ID - `{cid}`\n"
+            f"Members - `{members}`</b>\n\n"
         )
-        out += f"<b>{count}. Title - `{chat['title']}`\nID - `{chat['id']}`\nMembers - `{members_count}`</b>"
-        out += "\n\n"
         count += 1
+
     try:
         if count > 1:
             await msg.edit_text(out)
         else:
-            await msg.edit_text("<b>No groups found</b>")
+            await msg.edit_text("<b>No valid groups found</b>")
     except MessageTooLong:
-        with open("chats.txt", "w+") as outfile:
-            outfile.write(out)
-        await message.reply_document("chats.txt", caption="<b>List of all groups</b>")
+        with open("chats.txt", "w+") as f:
+            f.write(out)
+        await message.reply_document("chats.txt", caption="<b>Groups list</b>")
 
 
 @Client.on_message(filters.command("stats") & filters.user(ADMINS) & filters.incoming)
-async def get_ststs(bot, message):
+async def get_stats(bot, message):
     users = await db.total_users_count()
     groups = await db.total_chat_count()
     size = get_size(await db.get_db_size())
@@ -107,9 +120,10 @@ async def get_ststs(bot, message):
     files = await Media.count_documents()
     db2_size = get_size(await get_files_db_size())
     db2_free = get_size(536870912)
-    uptime = time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - time.time()))
+    uptime = time.strftime("%Hh %Mm %Ss", time.gmtime(0))
     ram = psutil.virtual_memory().percent
     cpu = psutil.cpu_percent()
+
     await message.reply_text(
         script.STATUS_TXT.format(
             users, groups, size, free, files, db2_size, db2_free, uptime, ram, cpu
@@ -122,13 +136,10 @@ async def invite(client, message):
     toGenInvLink = message.command[1]
     if len(toGenInvLink) != 14:
         return await message.reply(
-            "Invalid chat id\nAdd -100 before chat id if You did not add any yet."
+            "Invalid chat id. Add -100 before chat id."
         )
     try:
-        link = await client.export_chat_invite_link(toGenInvLink)
+        link = await client.export_chat_invite_link(int(toGenInvLink))
         await message.reply(link)
     except Exception as e:
-        print(f"Error while generating invite link : {e}\nFor chat:{toGenInvLink}")
-        await message.reply(
-            f"Error while generating invite link : {e}\nFor chat:{toGenInvLink}"
-        )
+        await message.reply(f"Error: `{e}`")
