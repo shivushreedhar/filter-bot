@@ -1,5 +1,5 @@
 import logging
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from info import DELETE_CHANNELS, LOG_CHANNEL
 from database.ia_filterdb import Media, unpack_new_file_id
 
@@ -10,24 +10,33 @@ media_filter = filters.document | filters.video | filters.audio
 
 @Client.on_message(filters.chat(DELETE_CHANNELS) & media_filter)
 async def deletemultiplemedia(bot, message):
+    # extra safety: allow only channel messages
+    if message.chat.type != enums.ChatType.CHANNEL:
+        return
+
     media = getattr(message, message.media.value, None)
-    if media.mime_type in ["video/mp4", "video/x-matroska"]:
-        file_id, _ = unpack_new_file_id(media.file_id)
-        try:
-            result = await Media.find_one({"file_id": file_id})
-            if result:
-                await result.delete()
-                logger.info(
-                    f"File {media.file_name} with ID {file_id} deleted from database"
-                )
-            else:
-                logger.warning(
-                    f"File {media.file_name} with ID {file_id} not found in database"
-                )
-        except Exception as e:
-            logger.error(
-                f"Error deleting file {media.file_name} with ID {file_id}: {str(e)}"
+    if not media:
+        return
+
+    if media.mime_type not in ("video/mp4", "video/x-matroska"):
+        return
+
+    file_id, _ = unpack_new_file_id(media.file_id)
+
+    try:
+        result = await Media.find_one({"file_id": file_id})
+        if result:
+            await result.delete()
+            logger.info(
+                f"File deleted from DB | name={media.file_name} | id={file_id}"
             )
-            await bot.send_message(
-                LOG_CHANNEL, f"Error deleting file {media.file_name}: {str(e)}"
+        else:
+            logger.warning(
+                f"File not found in DB | name={media.file_name} | id={file_id}"
             )
+    except Exception as e:
+        logger.error(f"Delete error | {e}")
+        await bot.send_message(
+            LOG_CHANNEL,
+            f"<b>Delete Error</b>\n<code>{e}</code>",
+        )
