@@ -1,15 +1,11 @@
 # --| This code created by: Jisshu_bots & SilentXBotz |--#
 
 import re
-import hashlib
 import asyncio
 import aiohttp
 
-from typing import Optional
 from collections import defaultdict
-
-from pyrogram import Client, filters
-from pyrogram import enums
+from pyrogram import Client, filters, enums
 
 from info import *
 from utils import *
@@ -28,7 +24,6 @@ CAPTION_LANGUAGES = [
 ]
 
 POST_DELAY = 10
-
 media_filter = filters.document | filters.video | filters.audio
 
 notified_movies = set()
@@ -56,26 +51,44 @@ UPDATE_CAPTION = """<b>𝖭𝖤𝖶 {} 𝖠𝖣𝖣𝖤𝖣 ✅</b>
 @Client.on_message(media_filter)
 async def media(bot, message):
 
-    # 🔐 SAFE CHANNEL CHECK (FIX)
-    if message.chat.id not in CHANNELS:
+    # 🔹 LOG incoming media
+    print(f"[MEDIA] Received | chat_id={message.chat.id} | type={message.chat.type}")
+
+    # ✅ 1. ONLY CHANNEL POSTS
+    if message.chat.type != enums.ChatType.CHANNEL:
+        print("[SKIP] Not a channel message")
         return
 
-    bot_id = bot.me.id
-    media = getattr(message, message.media.value, None)
+    # ✅ 2. ONLY DATABASE CHANNELS
+    if message.chat.id not in CHANNELS:
+        print(f"[SKIP] Channel {message.chat.id} not in DATABASE CHANNELS")
+        return
 
+    print(f"[OK] Database channel detected: {message.chat.id}")
+
+    media = getattr(message, message.media.value, None)
     if not media:
+        print("[SKIP] No media found")
         return
 
     if media.mime_type not in ["video/mp4", "video/x-matroska", "document/mp4"]:
+        print(f"[SKIP] Unsupported mime type: {media.mime_type}")
         return
 
     media.file_type = message.media.value
     media.caption = message.caption
 
+    print(f"[SAVE] Saving file: {media.file_name}")
+
     success_sts = await save_file(media)
 
-    if success_sts == "suc" and await db.get_send_movie_update_status(bot_id):
+    print(f"[SAVE] Status: {success_sts}")
+
+    if success_sts == "suc" and await db.get_send_movie_update_status(bot.me.id):
+        print("[QUEUE] Movie queued for posting")
         await queue_movie_file(bot, media)
+    else:
+        print("[QUEUE] Movie update posting disabled")
 
 
 # ================= QUEUE ================= #
@@ -84,6 +97,8 @@ async def queue_movie_file(bot, media):
     try:
         file_name = await movie_name_format(media.file_name)
         caption = await movie_name_format(media.caption or "")
+
+        print(f"[QUEUE] Processing movie: {file_name}")
 
         year_match = re.search(r"\b(19|20)\d{2}\b", caption)
         year = year_match.group(0) if year_match else None
@@ -111,18 +126,20 @@ async def queue_movie_file(bot, media):
             "jisshuquality": jisshuquality,
             "file_id": file_id,
             "file_size": file_size,
-            "caption": caption,
             "language": language,
             "year": year,
         })
 
         if file_name in processing_movies:
+            print(f"[QUEUE] Already processing: {file_name}")
             return
 
         processing_movies.add(file_name)
+        print(f"[WAIT] Waiting {POST_DELAY}s to group files")
         await asyncio.sleep(POST_DELAY)
 
         if file_name in movie_files:
+            print(f"[POST] Sending movie update: {file_name}")
             await send_movie_update(bot, file_name, movie_files[file_name])
             del movie_files[file_name]
 
@@ -130,6 +147,7 @@ async def queue_movie_file(bot, media):
 
     except Exception as e:
         processing_movies.discard(file_name)
+        print(f"[ERROR] Queue error: {e}")
         await bot.send_message(LOG_CHANNEL, f"Movie Queue Error:\n<code>{e}</code>")
 
 
@@ -138,13 +156,17 @@ async def queue_movie_file(bot, media):
 async def send_movie_update(bot, file_name, files):
     try:
         if file_name in notified_movies:
+            print(f"[SKIP] Already posted: {file_name}")
             return
+
         notified_movies.add(file_name)
 
         imdb = await get_imdb(file_name)
         title = imdb.get("title", file_name)
         kind = imdb.get("kind", "MOVIE").upper().replace(" ", "_")
         year = imdb.get("year", "")
+
+        print(f"[POST] Fetching poster for: {title}")
 
         poster = await fetch_movie_poster(title, year)
 
@@ -164,6 +186,8 @@ async def send_movie_update(bot, file_name, files):
 
         channel_id = await db.movies_update_channel_id() or MOVIE_UPDATE_CHANNEL
 
+        print(f"[SEND] Posting to MUC: {channel_id}")
+
         await bot.send_photo(
             chat_id=channel_id,
             photo=poster or "https://te.legra.ph/file/88d845b4f8a024a71465d.jpg",
@@ -171,7 +195,10 @@ async def send_movie_update(bot, file_name, files):
             parse_mode=enums.ParseMode.HTML
         )
 
+        print(f"[DONE] Movie posted successfully: {title}")
+
     except Exception as e:
+        print(f"[ERROR] Post error: {e}")
         await bot.send_message(LOG_CHANNEL, f"Post Error:\n<code>{e}</code>")
 
 
@@ -179,8 +206,7 @@ async def send_movie_update(bot, file_name, files):
 
 async def get_imdb(name):
     try:
-        data = await get_poster(name)
-        return data or {}
+        return await get_poster(name) or {}
     except:
         return {}
 
@@ -198,32 +224,3 @@ async def fetch_movie_poster(title, year=None):
                         return js[k][0]
     except:
         return None
-
-
-async def get_qualities(text):
-    for q in ["2160p","1080p","720p","480p","HDRip","CAMRip","WEB-DL"]:
-        if q.lower() in text.lower():
-            return q
-    return "HDRip"
-
-
-async def Jisshu_qualities(text, name):
-    for q in ["2160p","1080p","720p","480p"]:
-        if q in (text + name):
-            return q
-    return "720p"
-
-
-async def movie_name_format(name):
-    if not name:
-        return ""
-    return re.sub(r"[^\w\s]", " ", name).strip()
-
-
-def format_file_size(size):
-    for unit in ["B","KB","MB","GB","TB"]:
-        if size < 1024:
-            return f"{size:.2f} {unit}"
-        size /= 1024
-    return "0 MB"
-        
